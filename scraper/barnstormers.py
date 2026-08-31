@@ -90,21 +90,37 @@ def _matches_target_models(title: str) -> bool:
 
 _BRAND_RE = re.compile(r"\bstinson\b", re.IGNORECASE)
 
-_L5_RE = re.compile(r"\bl-?5-?([a-z])?\b", re.IGNORECASE)
-# Model 108: bare "108" or with a dash-number sub-model (108-1, 108-2,
-# 108-3). Only a hyphen (not a space) is allowed before the sub-model
-# digit, matching the lesson learned live in the companion Fairchild repo
-# (a space there let unrelated following words false-match as a suffix).
-_MODEL108_RE = re.compile(r"\b108-?([1-5])?\b", re.IGNORECASE)
+# Separator policy, learned the hard way from two different live bugs this
+# session: _title_from_url() unconditionally turns EVERY hyphen in the
+# source URL into a space before any of this regex ever runs, so a real
+# scraped title never contains a literal hyphen - "108-2" in the URL
+# becomes "108 2" in the title. A regex that only allows a hyphen there
+# (not a space) can therefore never match real data at all - confirmed
+# live here, where "Stinson-108-2-Lycoming" wrongly fell back to bare
+# "Stinson 108" instead of "Stinson 108-2". So: whenever a suffix begins
+# with a DIGIT (safe - a lone digit can't collide with an unrelated
+# following English word), the separator before it is [\s-]? (flexible).
+# Whenever a suffix begins with a LETTER (real collision risk - this is
+# what broke the companion Fairchild repo's Model 24 regex, where "24
+# wJacobs" - short for "with Jacobs [engine]" - had its "w" wrongly read
+# as a model suffix), the letter must be directly attached with no
+# separator at all.
+_L5_RE = re.compile(r"\bl[\s-]?5([a-z])?\b", re.IGNORECASE)
+# Model 108: bare "108" or with a digit sub-model (108-1, 108-2, 108-3).
+_MODEL108_RE = re.compile(r"\b108[\s-]?([1-5])?\b", re.IGNORECASE)
 # SR "Reliant" series: SR, SR-5 through SR-10, with an optional 0-2 letter
 # engine/variant suffix directly attached (SR-9B, SR-9C, SR-9D are all
 # well-documented, not obscure). The digit and letter suffix are captured
-# as a single combined group so a directly-attached trailing letter (no
-# space) doesn't break the word-boundary check the way it would if split
-# across two separately-anchored groups.
-_SR_RE = re.compile(r"\bsr-?((?:5|6|7|8|9|10)[a-z]{0,2})?\b", re.IGNORECASE)
-# Prewar Model 10/10A Voyager.
-_MODEL10_RE = re.compile(r"\b10-?(a)?\b", re.IGNORECASE)
+# as a single combined group so the trailing letter's own boundary check
+# isn't affected by how the leading "SR"-to-digit separator is handled.
+_SR_RE = re.compile(r"\bsr[\s-]?((?:5|6|7|8|9|10)[a-z]{0,2})?\b", re.IGNORECASE)
+# Prewar Model 10/10A Voyager - "A" is a letter suffix, so (per the policy
+# above) no separator is allowed before it.
+_MODEL10_RE = re.compile(r"\b10(a)?\b", re.IGNORECASE)
+# V-77: the US Army Air Corps designation for impressed/procured civilian
+# Reliants used as utility transports - confirmed live ("Stinson V-77
+# Reliant"), not something anticipated in advance.
+_V77_RE = re.compile(r"\bv[\s-]?77\b", re.IGNORECASE)
 
 _MARKETING_NAME_RULES = [
     (re.compile(r"\bstation\s*wagon\b", re.IGNORECASE), "Station Wagon"),
@@ -123,6 +139,9 @@ def _extract_model(title: str) -> tuple[str, str] | None:
     if match:
         suffix = match.group(1)
         return MAKE, f"L-5{suffix.upper()}" if suffix else "L-5"
+
+    if _V77_RE.search(title):
+        return MAKE, "V-77"
 
     match = _MODEL108_RE.search(title)
     if match:
